@@ -1,0 +1,8 @@
+*.iml
+target
+.idea
+*~
+generated-sources
+gradlew*
+gradle
+.gradle
