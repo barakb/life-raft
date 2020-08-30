@@ -11,4 +11,5 @@
 
     <logger name="org.barak.raft.Transport" level="INFO"/>
     <logger name="org.barak.raft.Alarm" level="INFO"/>
+    <logger name="org.barak.raft.Server" level="INFO"/>
 </configuration>

@@ -59,7 +59,7 @@ class Server(
 
 
     private suspend fun stepDown(term: Long) {
-        logger.info("${endpoint.name}: stepping down")
+        logger.debug("${endpoint.name}: stepping down")
         this.term = term
         state = State.Follower
         votedFor = null
@@ -77,7 +77,7 @@ class Server(
     }
 
     private suspend fun handleAppendEntries(request: Message.AppendEntries) {
-        logger.info("${endpoint.name}: handling handleAppendEntries message $request")
+        logger.debug("${endpoint.name}: handling handleAppendEntries message $request")
         if (term < request.term) {
             stepDown(request.term)
         }
@@ -89,7 +89,7 @@ class Server(
     }
 
     private suspend fun handleRequestVoteReply(reply: Message.RequestVoteReply) {
-        logger.info("${endpoint.name}: handling requestVoteReply message $reply")
+        logger.debug("${endpoint.name}: handling requestVoteReply message $reply")
         if (term < reply.term) {
             stepDown(reply.term)
         }
@@ -99,7 +99,7 @@ class Server(
     }
 
     private suspend fun handleRequestVote(request: Message.RequestVote) {
-        logger.info("${endpoint.name}: handling requestVote message $request")
+        logger.debug("${endpoint.name}: handling requestVote message $request")
         if (term < request.term) {
             stepDown(request.term)
         }
@@ -117,7 +117,7 @@ class Server(
     }
 
     private suspend fun handleTimeout(timeout: Timeout) {
-        logger.info("${endpoint.name}: handling timeout $timeout")
+        logger.debug("${endpoint.name}: handling timeout $timeout")
         when (timeout) {
             Timeout.Follower -> startNewElection()
             Timeout.Election -> becomeLeader()
@@ -128,7 +128,7 @@ class Server(
 
     private suspend fun startNewElection() {
         if (state == State.Follower || state == State.Candidate) {
-            logger.info("${endpoint.name}: starting new election")
+            logger.debug("${endpoint.name}: starting new election at term ${term + 1}")
             term += 1
             votedFor = endpoint.name
             state = State.Candidate
@@ -141,7 +141,7 @@ class Server(
 
     private fun sendRequestVotes() {
         if (state == State.Candidate) {
-            logger.info("${endpoint.name}: sendRequestVotes")
+            logger.debug("${endpoint.name}: sendRequestVotes")
             peers.forEach {
                 sendRequestVote(it)
             }
@@ -155,7 +155,7 @@ class Server(
     private suspend fun becomeLeader() {
         if (state == State.Candidate) {
             val votedForMe = votedGranted.values.filter { it }.size + 1
-            logger.info("${endpoint.name}: has $votedForMe votes in term $term")
+            logger.debug("${endpoint.name}: has $votedForMe votes in term $term")
             if (floor((peers.size + 1.0) / 2.0) < votedForMe) {
                 logger.info("${endpoint.name}: become leader of term $term")
                 state = State.Leader
@@ -165,7 +165,7 @@ class Server(
     }
 
     private suspend fun sendAppendEntries() {
-        logger.info("${endpoint.name}: sending appendEntries :)")
+        logger.debug("${endpoint.name}: sending appendEntries :)")
         if (state == State.Leader) {
             peers.forEach {
                 val request = Message.AppendEntries(endpoint.name, it, term)

@@ -23,17 +23,17 @@ class Alarm(private val sendChannel: Channel<Timeout>, private val name: String 
 
     suspend fun setCandidateAlarm() {
         job?.cancel()
-        cmdChannel.send { sendTimeout(1500, 3000, Timeout.Election) }
+        cmdChannel.send { sendTimeout(150, 300, Timeout.Election) }
     }
 
     suspend fun setLeaderAlarm() {
         job?.cancel()
-        cmdChannel.send { sendTimeout(1000, Timeout.Leader) }
+        cmdChannel.send { sendTimeout(100, Timeout.Leader) }
     }
 
     suspend fun setFollowerAlarm() {
         job?.cancel()
-        cmdChannel.send { sendTimeout(1500, 3000, Timeout.Follower) }
+        cmdChannel.send { sendTimeout(150, 300, Timeout.Follower) }
     }
 
     suspend fun cancelAlarm() {

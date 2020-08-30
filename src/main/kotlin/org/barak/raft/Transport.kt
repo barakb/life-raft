@@ -31,7 +31,7 @@ data class Endpoint(
 private val logger = KotlinLogging.logger {}
 
 interface Transport {
-    fun endpoint(name: String): Endpoint
+    suspend fun endpoint(name: String): Endpoint
     suspend fun close(name: String)
     suspend fun close()
 
@@ -55,15 +55,21 @@ class InProcessTransport(
     private val endpoints = mutableMapOf<String, Endpoint>()
     private val job = run()
 
-    override fun endpoint(name: String): Endpoint {
-        val ep = endpoints[name]
-        return if (ep != null) {
-            ep
-        } else {
-            val res = Endpoint(name, receiveChannel, this)
-            endpoints[name] = res
-            res
+    override suspend fun endpoint(name: String): Endpoint {
+        val completableDeferred = CompletableDeferred<Endpoint>()
+        cmdChannel.send {
+            val ep = endpoints[name]
+            completableDeferred.complete(
+                if (ep != null) {
+                    ep
+                } else {
+                    val res = Endpoint(name, receiveChannel, this)
+                    endpoints[name] = res
+                    res
+                }
+            )
         }
+        return completableDeferred.await()
     }
 
     override suspend fun close(name: String) {

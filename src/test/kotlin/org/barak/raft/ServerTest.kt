@@ -24,7 +24,7 @@ internal class ServerTest {
             runBlocking {
                 InProcessTransport().use {
                     val server = Server(endpoint("barak"))
-                    delay(5.seconds)
+                    delay(7.seconds)
                     assertEquals(State.Leader, server.state)
                     server.close()
                 }
