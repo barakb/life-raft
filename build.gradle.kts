@@ -33,6 +33,10 @@ tasks.test {
     useJUnitPlatform()
 }
 
+testlogger {
+    showStandardStreams = true
+}
+
 application {
     mainClassName = "org.barak.raft.MainKt"
     applicationDefaultJvmArgs = listOf("-Dkotlinx.coroutines.debug")

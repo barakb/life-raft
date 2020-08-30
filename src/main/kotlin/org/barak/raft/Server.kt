@@ -23,7 +23,8 @@ private val logger = KotlinLogging.logger {}
 @ExperimentalTime
 @InternalCoroutinesApi
 class Server(
-    private val endpoint: Endpoint
+    private val endpoint: Endpoint,
+    val peers: MutableList<String> = mutableListOf()
 ) : CoroutineScope {
     @Suppress("unused")
     private var term: Long = 1
@@ -45,13 +46,11 @@ class Server(
     @Suppress("unused")
     private val lastApplied = 0
 
-    @Suppress("unused")
-    private val peers = mutableListOf<String>()
 
     @Suppress("unused")
     private val log = Log()
     private val eventChannel = Channel<Timeout>(1)
-    private val alarm = Alarm(eventChannel)
+    private val alarm = Alarm(eventChannel, endpoint.name)
     private val supervisor = SupervisorJob()
 
     private val job = run()
@@ -59,47 +58,90 @@ class Server(
     var state: State = State.Follower
 
 
-    private suspend fun becomeFollower() {
+    private suspend fun stepDown(term: Long) {
+        logger.info("${endpoint.name}: stepping down")
+        this.term = term
         state = State.Follower
-        alarm.cancel()
-        alarm.startHeartbeatDueClock()
+        votedFor = null
+        alarm.setFollowerAlarm()
     }
 
-    private fun handleMessage(message: Message) {
+
+    private suspend fun handleMessage(message: Message) {
         when (message) {
-            is Message.RequestVote -> TODO()
-            is Message.RequestVoteRsp -> TODO()
-            is Message.AppendEntries -> TODO()
+            is Message.RequestVote -> handleRequestVote(message)
+            is Message.RequestVoteReply -> handleRequestVoteReply(message)
+            is Message.AppendEntries -> handleAppendEntries(message)
             is Message.AppendEntriesRsp -> TODO()
         }
     }
 
-    private fun handleTimeout(timeout: Timeout) {
-        logger.info("handling timeout $timeout")
+    private suspend fun handleAppendEntries(request: Message.AppendEntries) {
+        logger.info("${endpoint.name}: handling handleAppendEntries message $request")
+        if (term < request.term) {
+            stepDown(request.term)
+        }
+        if (term == request.term) {
+            state = State.Follower
+            alarm.setFollowerAlarm()
+            //todo handle log
+        }
+    }
+
+    private suspend fun handleRequestVoteReply(reply: Message.RequestVoteReply) {
+        logger.info("${endpoint.name}: handling requestVoteReply message $reply")
+        if (term < reply.term) {
+            stepDown(reply.term)
+        }
+        if (state == State.Candidate && reply.term == term) {
+            votedGranted[reply.from] = reply.granted
+        }
+    }
+
+    private suspend fun handleRequestVote(request: Message.RequestVote) {
+        logger.info("${endpoint.name}: handling requestVote message $request")
+        if (term < request.term) {
+            stepDown(request.term)
+        }
+        var granted = false
+        if (term == request.term
+            && (votedFor == null || votedFor == request.from)
+            && ((log.lastTerm() < request.lastLogTerm)
+                    ||
+                    ((log.lastTerm() == request.lastLogTerm) && (log.lastIndex() <= request.lastLogIndex)))
+        ) {
+            granted = true
+            votedFor = request.from
+        }
+        send(Message.RequestVoteReply(endpoint.name, request.from, term, granted))
+    }
+
+    private suspend fun handleTimeout(timeout: Timeout) {
+        logger.info("${endpoint.name}: handling timeout $timeout")
         when (timeout) {
-            Timeout.HeartbeatDue -> startNewElection()
+            Timeout.Follower -> startNewElection()
             Timeout.Election -> becomeLeader()
-            Timeout.SendHeartbeats -> sendAppendEntries()
+            Timeout.Leader -> sendAppendEntries()
         }
 
     }
 
-    private fun startNewElection() {
+    private suspend fun startNewElection() {
         if (state == State.Follower || state == State.Candidate) {
-            logger.info("starting new election")
+            logger.info("${endpoint.name}: starting new election")
             term += 1
             votedFor = endpoint.name
             state = State.Candidate
             votedGranted.clear()
             matchIndex.clear()
             sendRequestVotes()
-            alarm.startElectionClock()
+            alarm.setCandidateAlarm()
         }
     }
 
     private fun sendRequestVotes() {
         if (state == State.Candidate) {
-            logger.info("sendRequestVotes")
+            logger.info("${endpoint.name}: sendRequestVotes")
             peers.forEach {
                 sendRequestVote(it)
             }
@@ -107,50 +149,56 @@ class Server(
     }
 
     private fun sendRequestVote(to: String) {
-        send(Message.RequestVote(endpoint.name, to, term))
+        send(Message.RequestVote(endpoint.name, to, term, log.lastTerm(), log.lastIndex()))
     }
 
-    private fun becomeLeader() {
+    private suspend fun becomeLeader() {
         if (state == State.Candidate) {
             val votedForMe = votedGranted.values.filter { it }.size + 1
+            logger.info("${endpoint.name}: has $votedForMe votes in term $term")
             if (floor((peers.size + 1.0) / 2.0) < votedForMe) {
-                logger.info("server ${endpoint.name} become leader of term $term")
+                logger.info("${endpoint.name}: become leader of term $term")
                 state = State.Leader
-                alarm.startLeaderAlarm()
+                sendAppendEntries()
             }
         }
     }
 
-    private fun sendAppendEntries() {
-        logger.info("sending appendEntries :)")
+    private suspend fun sendAppendEntries() {
+        logger.info("${endpoint.name}: sending appendEntries :)")
+        if (state == State.Leader) {
+            peers.forEach {
+                val request = Message.AppendEntries(endpoint.name, it, term)
+                send(request)
+            }
+            alarm.setLeaderAlarm()
+        }
     }
 
     @Suppress("unused")
     private fun send(message: Message) {
         if (!endpoint.sendChannel.offer(message)) {
-            logger.error("failed to send message: $message, endpoint sendChannel is full")
+            logger.error("${endpoint.name}: failed to send message: $message, endpoint sendChannel is full")
+        } else {
+            logger.debug("${endpoint.name}: sent -> $message")
         }
     }
 
     private fun run(): Job {
         return launch {
-            logger.info("run using scope $this")
             try {
-                logger.info("server running")
-                becomeFollower()
+                stepDown(term)
                 while (isActive) {
                     when (val selectResult = select()) {
                         is SelectResult.M -> handleMessage(selectResult.message)
                         is SelectResult.T -> handleTimeout(selectResult.timeout)
                         SelectResult.Closed -> {
-                            logger.info("returning")
                             return@launch
                         }
                     }
                 }
             } finally {
                 alarm.cancel()
-                logger.info("done")
             }
         }
     }
@@ -172,7 +220,6 @@ class Server(
                 }
             }
         }
-
     }
 
     suspend fun close(): Job {

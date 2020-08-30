@@ -1,7 +1,7 @@
 package org.barak.raft
 
 import kotlinx.coroutines.*
-import kotlinx.coroutines.channels.SendChannel
+import kotlinx.coroutines.channels.Channel
 import mu.KotlinLogging
 import kotlin.coroutines.CoroutineContext
 import kotlin.random.Random
@@ -9,42 +9,86 @@ import kotlin.random.Random
 @Suppress("unused")
 private val logger = KotlinLogging.logger {}
 
-class Alarm(private val sendChannel: SendChannel<Timeout>) : CoroutineScope {
+class Alarm(private val sendChannel: Channel<Timeout>, private val name: String = "alarm") : CoroutineScope {
+
+    private val cmdChannel = Channel<() -> Unit>()
+    private var term = 0
+    private var job: Job? = null
     private val supervisor = SupervisorJob()
 
-    fun startElectionClock() {
-        sendTimeout(150, 300, Timeout.Election)
+
+    init {
+        start()
     }
 
-    fun startHeartbeatDueClock() {
-        sendTimeout(1500, 3000, Timeout.HeartbeatDue)
+    suspend fun setCandidateAlarm() {
+        job?.cancel()
+        cmdChannel.send { sendTimeout(1500, 3000, Timeout.Election) }
     }
 
-    private fun sendTimeout(from: Long, to: Long, timeout: Timeout): Job {
-        return launch {
-            delay(Random.nextLong(from, to))
-            sendChannel.send(timeout)
-        }
+    suspend fun setLeaderAlarm() {
+        job?.cancel()
+        cmdChannel.send { sendTimeout(1000, Timeout.Leader) }
     }
 
-    fun startLeaderAlarm(): Job {
-        return launch {
-            while (isActive) {
-                delay(1000)
-                sendChannel.send(Timeout.SendHeartbeats)
+    suspend fun setFollowerAlarm() {
+        job?.cancel()
+        cmdChannel.send { sendTimeout(1500, 3000, Timeout.Follower) }
+    }
+
+    suspend fun cancelAlarm() {
+        job?.cancel()
+        cmdChannel.send {
+            job = null
+            term += 1
+            var next = sendChannel.poll()
+            while (next != null) {
+                next = sendChannel.poll()
             }
         }
     }
 
-    suspend fun cancel() {
-        supervisor.children.forEach {
-            it.cancel()
-        }
-        supervisor.children.forEach {
-            it.join()
+    private fun sendTimeout(from: Long, to: Long, timeout: Timeout) {
+        return sendTimeout(Random.nextLong(from, to), timeout)
+    }
+
+    private fun sendTimeout(delay: Long, timeout: Timeout) {
+        job = null
+        term += 1
+        val myTerm = term
+        logger.debug("$name: setting alarm to $timeout in $delay milliseconds myTerm = $myTerm term = $term")
+        job = launch {
+            delay(delay)
+            if (term == myTerm) {
+                logger.debug("$name: sending alarm $timeout after delay $delay, myTerm = $myTerm term = $term")
+                sendChannel.send(timeout)
+            }
         }
     }
 
+    suspend fun close() {
+        cmdChannel.close()
+        supervisor.cancel()
+        supervisor.join()
+    }
+
+    suspend fun use(block: suspend Alarm.() -> Unit) {
+        try {
+            block()
+        } finally {
+            close()
+        }
+    }
+
+    private fun start() {
+        launch {
+            for (cmd in cmdChannel) {
+                cmd()
+            }
+        }
+    }
+
+
     override val coroutineContext: CoroutineContext
-        get() = Dispatchers.Default + CoroutineName("timeout generator")
+        get() = Dispatchers.Default + CoroutineName("Alarm ($name)") + supervisor
 }

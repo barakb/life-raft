@@ -19,7 +19,11 @@ data class Endpoint(
 
     @Suppress("unused")
     suspend fun use(block: Endpoint.() -> Unit) {
-        block().also { close() }
+        try {
+            block()
+        } finally {
+            close()
+        }
     }
 }
 
@@ -33,7 +37,11 @@ interface Transport {
 
     @Suppress("unused")
     suspend fun use(block: suspend Transport.() -> Unit) {
-        block().also { close() }
+        try {
+            block()
+        } finally {
+            close()
+        }
     }
 }
 
@@ -99,6 +107,8 @@ class InProcessTransport(
             logger.error("failed to deliver message: $message, unknown recipient: ${message.to}")
         } else if (!status) {
             logger.error("failed to deliver message: $message, queue is full")
+        } else {
+            logger.debug("routeMessage: $message")
         }
     }
 
