@@ -9,19 +9,29 @@ import kotlin.random.Random
 @Suppress("unused")
 private val logger = KotlinLogging.logger {}
 
-class TimeoutGenerator(private val sendChannel: SendChannel<Timeout>) : CoroutineScope {
+class Alarm(private val sendChannel: SendChannel<Timeout>) : CoroutineScope {
     private val supervisor = SupervisorJob()
 
-
-    fun startElectionTimeouts() {
-        sendTimeouts(150, 300, Timeout.Election)
+    fun startElectionClock() {
+        sendTimeout(150, 300, Timeout.Election)
     }
 
-    private fun sendTimeouts(from: Long, to: Long, timeout: Timeout): Job {
+    fun startHeartbeatDueClock() {
+        sendTimeout(1500, 3000, Timeout.HeartbeatDue)
+    }
+
+    private fun sendTimeout(from: Long, to: Long, timeout: Timeout): Job {
+        return launch {
+            delay(Random.nextLong(from, to))
+            sendChannel.send(timeout)
+        }
+    }
+
+    fun startLeaderAlarm(): Job {
         return launch {
             while (isActive) {
-                delay(Random.nextLong(from, to))
-                sendChannel.send(timeout)
+                delay(1000)
+                sendChannel.send(Timeout.SendHeartbeats)
             }
         }
     }
@@ -29,9 +39,10 @@ class TimeoutGenerator(private val sendChannel: SendChannel<Timeout>) : Coroutin
     suspend fun cancel() {
         supervisor.children.forEach {
             it.cancel()
+        }
+        supervisor.children.forEach {
             it.join()
         }
-        logger.info("cancelChildren $supervisor")
     }
 
     override val coroutineContext: CoroutineContext

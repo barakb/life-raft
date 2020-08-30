@@ -8,6 +8,8 @@ sealed class Message(open val from: String, open val to: String) {
 }
 
 sealed class Timeout {
+    object HeartbeatDue : Timeout()
+    object SendHeartbeats : Timeout()
     object Election : Timeout()
 }
 
