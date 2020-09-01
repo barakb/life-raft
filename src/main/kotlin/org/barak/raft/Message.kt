@@ -20,7 +20,6 @@ sealed class Message(open val from: String, open val to: String) {
 }
 
 sealed class Timeout {
-    object Follower : Timeout()
     object Leader : Timeout()
     object Election : Timeout()
 }

@@ -20,11 +20,11 @@ private val logger = KotlinLogging.logger {}
 internal class ServerTest {
     @Test
     fun oneNodeBecomeLeader() {
-        assertTimeout(Duration.ofSeconds(10)) {
+        assertTimeout(Duration.ofSeconds(5)) {
             runBlocking {
                 InProcessTransport().use {
                     val server = Server(endpoint("barak"))
-                    delay(7.seconds)
+                    delay(3.seconds)
                     assertEquals(State.Leader, server.state)
                     server.close()
                 }
@@ -34,12 +34,12 @@ internal class ServerTest {
 
     @Test
     fun twoNodesSelectALeaderLeader() {
-        assertTimeout(Duration.ofSeconds(15)) {
+        assertTimeout(Duration.ofSeconds(5)) {
             runBlocking {
                 InProcessTransport().use {
                     val server1 = Server(endpoint("server1"), mutableListOf("server2"))
                     val server2 = Server(endpoint("server2"), mutableListOf("server1"))
-                    delay(10.seconds)
+                    delay(3.seconds)
 //                    assertEquals(State.Leader, server.state)
                     assertTrue(
                         (server1.state == State.Leader && server2.state == State.Follower)

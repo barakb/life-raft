@@ -63,7 +63,7 @@ class Server(
         this.term = term
         state = State.Follower
         votedFor = null
-        alarm.setFollowerAlarm()
+        alarm.setElectionAlarm()
     }
 
 
@@ -83,7 +83,7 @@ class Server(
         }
         if (term == request.term) {
             state = State.Follower
-            alarm.setFollowerAlarm()
+            alarm.setElectionAlarm()
             //todo handle log
         }
     }
@@ -96,6 +96,8 @@ class Server(
         if (state == State.Candidate && reply.term == term) {
             votedGranted[reply.from] = reply.granted
         }
+        //should I become a leader ?
+        becomeLeader()
     }
 
     private suspend fun handleRequestVote(request: Message.RequestVote) {
@@ -119,11 +121,16 @@ class Server(
     private suspend fun handleTimeout(timeout: Timeout) {
         logger.debug("${endpoint.name}: handling timeout $timeout")
         when (timeout) {
-            Timeout.Follower -> startNewElection()
-            Timeout.Election -> becomeLeader()
+            Timeout.Election -> handleTimeout()
             Timeout.Leader -> sendAppendEntries()
         }
 
+    }
+
+    private suspend fun handleTimeout() {
+        if (!becomeLeader()) {
+            startNewElection()
+        }
     }
 
     private suspend fun startNewElection() {
@@ -135,7 +142,7 @@ class Server(
             votedGranted.clear()
             matchIndex.clear()
             sendRequestVotes()
-            alarm.setCandidateAlarm()
+            alarm.setElectionAlarm()
         }
     }
 
@@ -152,7 +159,7 @@ class Server(
         send(Message.RequestVote(endpoint.name, to, term, log.lastTerm(), log.lastIndex()))
     }
 
-    private suspend fun becomeLeader() {
+    private suspend fun becomeLeader(): Boolean {
         if (state == State.Candidate) {
             val votedForMe = votedGranted.values.filter { it }.size + 1
             logger.debug("${endpoint.name}: has $votedForMe votes in term $term")
@@ -160,12 +167,14 @@ class Server(
                 logger.info("${endpoint.name}: become leader of term $term")
                 state = State.Leader
                 sendAppendEntries()
+                return true
             }
         }
+        return false
     }
 
     private suspend fun sendAppendEntries() {
-        logger.debug("${endpoint.name}: sending appendEntries :)")
+        logger.debug("${endpoint.name}: sending appendEntries term is $term")
         if (state == State.Leader) {
             peers.forEach {
                 val request = Message.AppendEntries(endpoint.name, it, term)
