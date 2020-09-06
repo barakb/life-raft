@@ -21,7 +21,7 @@ sealed class Message(open val from: String, open val to: String) {
         val leaderCommit: Long
     ) : Message(from, to)
 
-    data class AppendEntriesRsp(
+    data class AppendEntriesReply(
         override val from: String, override val to: String,
         val term: Long,
         val success: Boolean,

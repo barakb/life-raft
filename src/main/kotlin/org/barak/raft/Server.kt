@@ -60,7 +60,7 @@ class Server(
 
 
     private suspend fun stepDown(term: Long) {
-        logger.debug("${endpoint.name}: stepping down")
+        logger.trace("${endpoint.name} (${state}): stepping down")
         if (this.term != term) {
             votedFor = null
             this.term = term
@@ -75,12 +75,12 @@ class Server(
             is Message.RequestVote -> handleRequestVote(message)
             is Message.RequestVoteReply -> handleRequestVoteReply(message)
             is Message.AppendEntries -> handleAppendEntries(message)
-            is Message.AppendEntriesRsp -> handleAppendEntriesRsp(message)
+            is Message.AppendEntriesReply -> handleAppendEntriesRsp(message)
         }
     }
 
-    private fun handleAppendEntriesRsp(resp: Message.AppendEntriesRsp) {
-        logger.debug("handleAppendEntriesRsp $resp")
+    private fun handleAppendEntriesRsp(reply: Message.AppendEntriesReply) {
+        logger.trace("${endpoint.name} (${state}): handle AppendEntriesReply $reply")
         // TODO("")
     }
 
@@ -90,18 +90,17 @@ class Server(
      *  delete existing entry with all that follow it.
      * Append new entries if not already in the log
      * if leaderCommit >commitIndex set commitIndex = min(leaderCommit, index of last log)
-     *
      */
     private suspend fun handleAppendEntries(request: Message.AppendEntries) {
-        logger.debug("${endpoint.name}: handling handleAppendEntries message $request")
+        logger.trace("${endpoint.name} (${state}): handling AppendEntries message $request")
         if (request.term < term) {
             // ignore message from older terms
-            send(Message.AppendEntriesRsp(endpoint.name, request.from, term, false, 0))
+            send(Message.AppendEntriesReply(endpoint.name, request.from, term, false, 0))
         } else if (term < request.term) {
             // update my term
             val prevTerm = term
             stepDown(request.term)
-            send(Message.AppendEntriesRsp(endpoint.name, request.from, prevTerm, false, 0))
+            send(Message.AppendEntriesReply(endpoint.name, request.from, prevTerm, false, 0))
         } else {
             stepDown(request.term)
             var success = false
@@ -125,12 +124,12 @@ class Server(
                 matchIndex = index
                 commitIndex = Math.max(commitIndex, request.leaderCommit)
             }
-            send(Message.AppendEntriesRsp(endpoint.name, request.from, term, success, matchIndex))
+            send(Message.AppendEntriesReply(endpoint.name, request.from, term, success, matchIndex))
         }
     }
 
     private suspend fun handleRequestVoteReply(reply: Message.RequestVoteReply) {
-        logger.debug("${endpoint.name}: handling requestVoteReply message $reply")
+        logger.trace("${endpoint.name} (${state}): handling requestVoteReply message $reply")
         if (term < reply.term) {
             stepDown(reply.term)
         }
@@ -142,7 +141,7 @@ class Server(
     }
 
     private suspend fun handleRequestVote(request: Message.RequestVote) {
-        logger.debug("${endpoint.name}: handling requestVote message $request")
+        logger.trace("${endpoint.name} (${state}): handling requestVote message $request")
         if (term < request.term) {
             stepDown(request.term)
         }
@@ -160,7 +159,7 @@ class Server(
     }
 
     private suspend fun handleTimeout(timeout: Timeout) {
-        logger.debug("${endpoint.name}: handling timeout $timeout")
+        logger.trace("${endpoint.name} (${state}): handling timeout $timeout")
         when (timeout) {
             Timeout.Election -> handleTimeout()
             Timeout.Leader -> sendAppendEntries()
@@ -176,7 +175,7 @@ class Server(
 
     private suspend fun startNewElection() {
         if (state == State.Follower || state == State.Candidate) {
-            logger.debug("${endpoint.name}: starting new election at term ${term + 1}")
+            logger.trace("${endpoint.name} (${state}): starting new election at term ${term + 1}")
             term += 1
             votedFor = endpoint.name
             state = State.Candidate
@@ -188,7 +187,7 @@ class Server(
 
     private fun sendRequestVotes() {
         if (state == State.Candidate) {
-            logger.debug("${endpoint.name}: sendRequestVotes")
+            logger.trace("${endpoint.name} (${state}): sendRequestVotes")
             peers.forEach {
                 sendRequestVote(it)
             }
@@ -202,9 +201,9 @@ class Server(
     private suspend fun becomeLeader(): Boolean {
         if (state == State.Candidate) {
             val votedForMe = votedGranted.values.filter { it }.size + 1
-            logger.debug("${endpoint.name}: has $votedForMe votes in term $term")
+            logger.trace("${endpoint.name} (${state}): has $votedForMe votes in term $term")
             if (floor((peers.size + 1.0) / 2.0) < votedForMe) {
-                logger.info("${endpoint.name}: become leader of term $term")
+                logger.info("${endpoint.name} (${state}): become leader of term $term")
                 initializeLeaderState()
                 sendAppendEntries()
                 return true
@@ -234,7 +233,7 @@ class Server(
      * the leader should begin to send the actual entries.
      */
     private suspend fun sendAppendEntries() {
-        logger.debug("${endpoint.name}: sending appendEntries term is $term")
+        logger.trace("${endpoint.name} (${state}): sending appendEntries term is $term")
         if (state == State.Leader) {
             peers.forEach {
                 val entries = if (matchIndex(it) + 1 == nextIndex(it)) {
@@ -261,9 +260,9 @@ class Server(
     @Suppress("unused")
     private fun send(message: Message) {
         if (!endpoint.sendChannel.offer(message)) {
-            logger.error("${endpoint.name}: failed to send message: $message, endpoint sendChannel is full")
+            logger.error("${endpoint.name} (${state}): failed to send message: $message, endpoint sendChannel is full")
         } else {
-            logger.debug("${endpoint.name}: sent -> $message")
+            logger.debug("${endpoint.name} (${state}): sent -> $message")
         }
     }
 
