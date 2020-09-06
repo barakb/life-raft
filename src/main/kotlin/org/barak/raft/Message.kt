@@ -13,10 +13,20 @@ sealed class Message(open val from: String, open val to: String) {
 
     data class AppendEntries(
         override val from: String, override val to: String,
-        val term: Long
+        val term: Long,
+        val leaderId: String,
+        val prevLogIndex: Long,
+        val prevLogTerm: Long,
+        val entries: List<LogEntry>,
+        val leaderCommit: Long
     ) : Message(from, to)
 
-    class AppendEntriesRsp(from: String, to: String) : Message(from, to)
+    data class AppendEntriesRsp(
+        override val from: String, override val to: String,
+        val term: Long,
+        val success: Boolean,
+        val matchIndex: Long
+    ) : Message(from, to)
 }
 
 sealed class Timeout {

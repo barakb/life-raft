@@ -27,24 +27,25 @@ class Server(
     val peers: MutableList<String> = mutableListOf()
 ) : CoroutineScope {
     @Suppress("unused")
-    private var term: Long = 1
+    private var term: Long = 0
 
     private var votedFor: String? = null
 
     // server that voted for me.
     private val votedGranted = mutableMapOf<String, Boolean>()
 
-    // for each member what is the known match index with me.
-    private val matchIndex = mutableMapOf<String, Int>()
 
-    // for each member what is the next index
-    private val nextIndex = mutableMapOf<String, Int>()
+    // for each member what is the next index, initialized to leader last log index + 1
+    private val _nextIndex = mutableMapOf<String, Int>()
 
-    @Suppress("unused")
-    private val commitIndex = 0
+    // for each member what is the known match index with me, initialized to leader last log index + 1.
+    private val _matchIndex = mutableMapOf<String, Int>()
 
     @Suppress("unused")
-    private val lastApplied = 0
+    private var commitIndex: Long = 0
+
+    @Suppress("unused")
+    private val lastApplied: Long = 0
 
 
     @Suppress("unused")
@@ -60,9 +61,11 @@ class Server(
 
     private suspend fun stepDown(term: Long) {
         logger.debug("${endpoint.name}: stepping down")
-        this.term = term
+        if (this.term != term) {
+            votedFor = null
+            this.term = term
+        }
         state = State.Follower
-        votedFor = null
         alarm.setElectionAlarm()
     }
 
@@ -72,19 +75,57 @@ class Server(
             is Message.RequestVote -> handleRequestVote(message)
             is Message.RequestVoteReply -> handleRequestVoteReply(message)
             is Message.AppendEntries -> handleAppendEntries(message)
-            is Message.AppendEntriesRsp -> TODO()
+            is Message.AppendEntriesRsp -> handleAppendEntriesRsp(message)
         }
     }
 
+    private fun handleAppendEntriesRsp(resp: Message.AppendEntriesRsp) {
+        logger.debug("handleAppendEntriesRsp $resp")
+        // TODO("")
+    }
+
+    /* Reply false if request.term < term
+     * Reply false if log does not contains prev entry with prev term
+     * if existing log entry conflict with new one (same index different log)
+     *  delete existing entry with all that follow it.
+     * Append new entries if not already in the log
+     * if leaderCommit >commitIndex set commitIndex = min(leaderCommit, index of last log)
+     *
+     */
     private suspend fun handleAppendEntries(request: Message.AppendEntries) {
         logger.debug("${endpoint.name}: handling handleAppendEntries message $request")
-        if (term < request.term) {
+        if (request.term < term) {
+            // ignore message from older terms
+            send(Message.AppendEntriesRsp(endpoint.name, request.from, term, false, 0))
+        } else if (term < request.term) {
+            // update my term
+            val prevTerm = term
             stepDown(request.term)
-        }
-        if (term == request.term) {
-            state = State.Follower
-            alarm.setElectionAlarm()
-            //todo handle log
+            send(Message.AppendEntriesRsp(endpoint.name, request.from, prevTerm, false, 0))
+        } else {
+            stepDown(request.term)
+            var success = false
+            var matchIndex = 0L
+            // log consistency check
+            if ((request.prevLogIndex == 0L) ||
+                ((request.prevLogIndex <= log.lastIndex()) && (log.getTerm(request.prevLogIndex) == request.prevLogTerm))
+            ) {
+                success = true
+                var index = request.prevLogIndex
+                // update my log
+                for (logEntry in request.entries) {
+                    index += 1
+                    if (log.getTerm(index) != logEntry.term) {
+                        while (index - 1 < log.lastIndex()) {
+                            log.pop()
+                        }
+                        log.push(logEntry)
+                    }
+                }
+                matchIndex = index
+                commitIndex = Math.max(commitIndex, request.leaderCommit)
+            }
+            send(Message.AppendEntriesRsp(endpoint.name, request.from, term, success, matchIndex))
         }
     }
 
@@ -140,7 +181,6 @@ class Server(
             votedFor = endpoint.name
             state = State.Candidate
             votedGranted.clear()
-            matchIndex.clear()
             sendRequestVotes()
             alarm.setElectionAlarm()
         }
@@ -165,7 +205,7 @@ class Server(
             logger.debug("${endpoint.name}: has $votedForMe votes in term $term")
             if (floor((peers.size + 1.0) / 2.0) < votedForMe) {
                 logger.info("${endpoint.name}: become leader of term $term")
-                state = State.Leader
+                initializeLeaderState()
                 sendAppendEntries()
                 return true
             }
@@ -173,11 +213,45 @@ class Server(
         return false
     }
 
+    private fun initializeLeaderState() {
+        state = State.Leader
+        _nextIndex.clear()
+        _matchIndex.clear()
+    }
+
+    private fun nextIndex(member: String): Long {
+        return _nextIndex[member]?.toLong() ?: (log.lastIndex() + 1)
+    }
+
+    private fun matchIndex(member: String): Long {
+        return _matchIndex[member]?.toLong() ?: 0
+    }
+
+    /**
+     * Until the leader has discovered where it and the follower’s logs match, the leader can send
+     * AppendEntries with no entries (like heartbeats) to save bandwidth.
+     * Then, once the matchIndex immediately precedes the nextIndex,
+     * the leader should begin to send the actual entries.
+     */
     private suspend fun sendAppendEntries() {
         logger.debug("${endpoint.name}: sending appendEntries term is $term")
         if (state == State.Leader) {
             peers.forEach {
-                val request = Message.AppendEntries(endpoint.name, it, term)
+                val entries = if (matchIndex(it) + 1 == nextIndex(it)) {
+                    log.subList(nextIndex(it), log.lastIndex())
+                } else {
+                    listOf()
+                }
+                val request = Message.AppendEntries(
+                    endpoint.name,
+                    it,
+                    term,
+                    endpoint.name,
+                    log.prevIndex() - 1,
+                    log.prevTerm(),
+                    entries,
+                    commitIndex
+                )
                 send(request)
             }
             alarm.setLeaderAlarm()

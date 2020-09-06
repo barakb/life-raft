@@ -6,6 +6,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
 import mu.KotlinLogging
 import org.junit.jupiter.api.Assertions.*
+import org.junit.jupiter.api.RepeatedTest
 import org.junit.jupiter.api.Test
 import java.time.Duration
 import kotlin.time.ExperimentalTime
@@ -32,7 +33,7 @@ internal class ServerTest {
         }
     }
 
-    @Test
+    @RepeatedTest(5)
     fun twoNodesSelectALeaderLeader() {
         assertTimeout(Duration.ofSeconds(5)) {
             runBlocking {

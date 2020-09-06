@@ -23,7 +23,7 @@ internal class InProcessTransportTest {
                 InProcessTransport().use {
                     val endpoint1 = endpoint("endpoint1")
                     val endpoint2 = endpoint("endpoint2")
-                    val message = Message.AppendEntries(endpoint1.name, endpoint2.name, 0)
+                    val message = Message.RequestVoteReply(endpoint1.name, endpoint2.name, 0, true)
                     endpoint1.sendChannel.send(message)
                     val received = endpoint2.receiveChannel.receive()
                     Assertions.assertEquals(message, received)
