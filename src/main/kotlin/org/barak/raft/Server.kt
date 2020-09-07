@@ -24,7 +24,8 @@ private val logger = KotlinLogging.logger {}
 @InternalCoroutinesApi
 class Server(
     private val endpoint: Endpoint,
-    val peers: MutableList<String> = mutableListOf()
+    val peers: MutableList<String> = mutableListOf(),
+    internal val log: Log = Log()
 ) : CoroutineScope {
     @Suppress("unused")
     private var term: Long = 0
@@ -36,10 +37,10 @@ class Server(
 
 
     // for each member what is the next index, initialized to leader last log index + 1
-    private val _nextIndex = mutableMapOf<String, Int>()
+    private val _nextIndex = mutableMapOf<String, Long>()
 
     // for each member what is the known match index with me, initialized to leader last log index + 1.
-    private val _matchIndex = mutableMapOf<String, Int>()
+    private val _matchIndex = mutableMapOf<String, Long>()
 
     @Suppress("unused")
     private var commitIndex: Long = 0
@@ -48,8 +49,6 @@ class Server(
     private val lastApplied: Long = 0
 
 
-    @Suppress("unused")
-    private val log = Log()
     private val eventChannel = Channel<Timeout>(1)
     private val alarm = Alarm(eventChannel, endpoint.name)
     private val supervisor = SupervisorJob()
@@ -75,13 +74,46 @@ class Server(
             is Message.RequestVote -> handleRequestVote(message)
             is Message.RequestVoteReply -> handleRequestVoteReply(message)
             is Message.AppendEntries -> handleAppendEntries(message)
-            is Message.AppendEntriesReply -> handleAppendEntriesRsp(message)
+            is Message.AppendEntriesReply -> handleAppendEntriesReply(message)
         }
     }
 
-    private fun handleAppendEntriesRsp(reply: Message.AppendEntriesReply) {
+    private suspend fun handleAppendEntriesReply(reply: Message.AppendEntriesReply) {
         logger.trace("${endpoint.name} (${state}): handle AppendEntriesReply $reply")
-        // TODO("")
+        if (term < reply.term) {
+            stepDown(reply.term)
+        }
+        if (state == State.Leader && term == reply.term) {
+            if (reply.success) {
+                val m = matchIndex(reply.from)
+                val n = nextIndex(reply.from)
+                _matchIndex[reply.from] = matchIndex(reply.from).coerceAtLeast(reply.matchIndex)
+                _nextIndex[reply.from] = reply.matchIndex + 1
+                if ((m != matchIndex(reply.from)) || (n != nextIndex((reply.from)))) {
+                    logger.trace(
+                        "${endpoint.name} (${state}): updating (matchIndex, nextIndex) from ($m, $n) " +
+                                "to (${matchIndex(reply.from)}, ${nextIndex(reply.from)}) for server ${reply.from} as a result of  $reply"
+                    )
+                }
+                advanceCommitIndex()
+            } else {
+                _nextIndex[reply.from] = (nextIndex(reply.from) - 1).coerceAtLeast(1L)
+            }
+        }
+    }
+
+    private fun advanceCommitIndex() {
+        if (state == State.Leader) {
+            val sorted = _matchIndex.values.sorted()
+            val index = floor((peers.size.toDouble()) / 2.0).toInt()
+//            logger.info("${endpoint.name} (${state}): sorted is $sorted index is $index")
+            val n = sorted[index]
+            if (log.getTerm(n) == term) {
+                val nextCommitIndex = n.coerceAtLeast(commitIndex)
+                logger.trace("${endpoint.name} (${state}): advanceCommitIndex $commitIndex -> $nextCommitIndex")
+                commitIndex = nextCommitIndex
+            }
+        }
     }
 
     /* Reply false if request.term < term
@@ -93,22 +125,23 @@ class Server(
      */
     private suspend fun handleAppendEntries(request: Message.AppendEntries) {
         logger.trace("${endpoint.name} (${state}): handling AppendEntries message $request")
-        if (request.term < term) {
+        if (request.term < term) { // message from old leader ?
             // ignore message from older terms
             send(Message.AppendEntriesReply(endpoint.name, request.from, term, false, 0))
-        } else if (term < request.term) {
+        } else if (term < request.term) { // there is a new leader ?
             // update my term
             val prevTerm = term
             stepDown(request.term)
             send(Message.AppendEntriesReply(endpoint.name, request.from, prevTerm, false, 0))
-        } else {
+        } else { // this is a message from my leader, perform a consistency check and update my logs
             stepDown(request.term)
             var success = false
             var matchIndex = 0L
-            // log consistency check
+            // log consistency check, the log entry before the lastIndex exists in my log its term is the same as the leader.
             if ((request.prevLogIndex == 0L) ||
                 ((request.prevLogIndex <= log.lastIndex()) && (log.getTerm(request.prevLogIndex) == request.prevLogTerm))
             ) {
+//                logger.info("${endpoint.name} (${state}): handling AppendEntries message passed consistency check $request")
                 success = true
                 var index = request.prevLogIndex
                 // update my log
@@ -118,11 +151,11 @@ class Server(
                         while (index - 1 < log.lastIndex()) {
                             log.pop()
                         }
-                        log.push(logEntry)
                     }
+                    log.push(logEntry)
                 }
                 matchIndex = index
-                commitIndex = Math.max(commitIndex, request.leaderCommit)
+                commitIndex = request.leaderCommit.coerceAtLeast(commitIndex)
             }
             send(Message.AppendEntriesReply(endpoint.name, request.from, term, success, matchIndex))
         }
@@ -203,8 +236,8 @@ class Server(
             val votedForMe = votedGranted.values.filter { it }.size + 1
             logger.trace("${endpoint.name} (${state}): has $votedForMe votes in term $term")
             if (floor((peers.size + 1.0) / 2.0) < votedForMe) {
-                logger.info("${endpoint.name} (${state}): become leader of term $term")
                 initializeLeaderState()
+                logger.info("${endpoint.name} (${state}): become leader of term $term")
                 sendAppendEntries()
                 return true
             }
@@ -216,14 +249,19 @@ class Server(
         state = State.Leader
         _nextIndex.clear()
         _matchIndex.clear()
+        val nextIndex = log.lastIndex() + 1
+        for (peer in peers) {
+            _matchIndex[peer] = 0
+            _nextIndex[peer] = nextIndex
+        }
     }
 
     private fun nextIndex(member: String): Long {
-        return _nextIndex[member]?.toLong() ?: (log.lastIndex() + 1)
+        return _nextIndex[member] ?: (log.lastIndex() + 1)
     }
 
     private fun matchIndex(member: String): Long {
-        return _matchIndex[member]?.toLong() ?: 0
+        return _matchIndex[member] ?: 0
     }
 
     /**
@@ -236,8 +274,11 @@ class Server(
         logger.trace("${endpoint.name} (${state}): sending appendEntries term is $term")
         if (state == State.Leader) {
             peers.forEach {
-                val entries = if (matchIndex(it) + 1 == nextIndex(it)) {
-                    log.subList(nextIndex(it), log.lastIndex())
+                val prevIndex = nextIndex(it) - 1
+                var lastIndex = (prevIndex + 1).coerceAtMost(log.lastIndex())
+                val entries = if ((matchIndex(it) + 1) == nextIndex(it)) { // it is ready for entries
+                    lastIndex = prevIndex
+                    log.subList(prevIndex, log.lastIndex())
                 } else {
                     listOf()
                 }
@@ -246,10 +287,10 @@ class Server(
                     it,
                     term,
                     endpoint.name,
-                    log.prevIndex() - 1,
-                    log.prevTerm(),
+                    prevIndex,
+                    log.getTerm(prevIndex),
                     entries,
-                    commitIndex
+                    commitIndex.coerceAtMost(lastIndex)
                 )
                 send(request)
             }

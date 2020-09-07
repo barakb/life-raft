@@ -75,14 +75,15 @@ class InProcessTransport(
     override suspend fun close(name: String) {
         cmdChannel.send {
             endpoints[name]?.close()
-            endpoints.remove(name)
+//            endpoints.remove(name)
         }
     }
 
     override suspend fun close() {
         job.cancel()
         receiveChannel.cancel()
-        for (endpoint in endpoints.values) {
+        val ep = endpoints.values.toList()
+        for (endpoint in ep) {
             endpoint.close()
         }
     }

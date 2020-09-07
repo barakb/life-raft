@@ -38,7 +38,7 @@ data class Log(val entries: MutableList<LogEntry> = mutableListOf()) {
     }
 
     fun subList(from: Long, to: Long): List<LogEntry> {
-        return if (from < to) {
+        return if (from <= to) {
             entries.subList(from.toInt(), to.toInt())
         } else {
             listOf()
