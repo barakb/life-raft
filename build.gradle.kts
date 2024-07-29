@@ -5,7 +5,7 @@ val jupiterVersion = "5.6.2"
 val logbackVersion = "1.2.3"
 
 plugins {
-    kotlin("jvm") version "1.4.0"
+    kotlin("jvm") version "1.9.25"
     application
     id("com.adarshr.test-logger") version "2.1.0"
 }
