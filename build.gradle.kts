@@ -7,7 +7,7 @@ val logbackVersion = "1.2.3"
 plugins {
     kotlin("jvm") version "1.4.0"
     application
-    id("com.adarshr.test-logger") version "2.1.0"
+    id("com.adarshr.test-logger") version "4.0.0"
 }
 
 group = "me.barak"
