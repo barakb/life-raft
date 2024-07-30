@@ -20,7 +20,7 @@ dependencies {
     testImplementation(kotlin("test-junit5"))
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:${coroutinesVersion}")
     implementation("ch.qos.logback:logback-classic:${logbackVersion}")
-    implementation("io.github.microutils:kotlin-logging:1.8.3")
+    implementation("io.github.microutils:kotlin-logging:3.0.5")
     testImplementation("org.junit.jupiter:junit-jupiter-api:${jupiterVersion}")
     testRuntimeOnly("org.junit.jupiter:junit-jupiter-engine:${jupiterVersion}")
 
