@@ -1,6 +1,6 @@
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
-val coroutinesVersion = "1.3.9"
+val coroutinesVersion = "1.11.0"
 val jupiterVersion = "5.6.2"
 val logbackVersion = "1.2.3"
 
