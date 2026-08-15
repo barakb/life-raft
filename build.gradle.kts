@@ -2,7 +2,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 
 val coroutinesVersion = "1.3.9"
 val jupiterVersion = "5.6.2"
-val logbackVersion = "1.2.3"
+val logbackVersion = "1.6.3"
 
 plugins {
     kotlin("jvm") version "1.4.0"
